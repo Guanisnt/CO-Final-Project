@@ -15,6 +15,7 @@ struct Instruction {
     string opcode;   // lw, sw, add, sub, beq
     int rs, rt, rd; // reg編號
     int immediate;
+    string stage="-"; // IF, ID, EX, MEM, WB
 };
 vector<Instruction> instructionMemory; // 指令記憶體
 
@@ -50,32 +51,36 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 }
 
 void IF() {
-    if(IF_ID.valid) return; // 如果IF_ID有指令了就不要再fetch
+    if(IF_ID.valid) return; // 如果IF_ID已經有指令，則跳過
 
-    if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內才能坐下去
+    if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內
         IF_ID.ins = instructionMemory[PC]; // 把指令放到IF_ID
-        IF_ID.valid = true; // IF_ID在IF有指令了
-        PC++; // 應該是+4，但是這裡指令用vector存所以+1
+        IF_ID.valid = true; // 設置IF_ID有效
+        IF_ID.ins.stage = "IF"; // 設定這條指令的階段為 IF
+        instructionMemory[PC].stage = "IF"; // 更新instructionMemory中的指令階段
+        //PC++; // 增加PC以指向下一條指令
     }
+    PC++;
 }
 
 void ID() {
-    if(!IF_ID.valid) return; // 如果IF_ID沒有東西就不做
-    ID_EX.ins = IF_ID.ins; // 把IF_ID的指令船到ID_EX
+    if(!IF_ID.valid) return; // 如果IF_ID沒有指令，則跳過
 
-    // control signal設定
-    setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal\
-
-    ID_EX.valid = true; // ID_EX在ID之後才會有指令
-    IF_ID.valid = false; // 用完了
+    ID_EX.ins = IF_ID.ins; // 把IF_ID的指令傳到ID_EX
+    ID_EX.valid = true; // 設置ID_EX有效
+    instructionMemory[PC-1].stage = "ID"; // 更新instructionMemory中的指令階段
+    IF_ID.valid = false; // 用完了IF_ID的指令
 }
 
 void EX() {
-    if(!ID_EX.valid) return; // 如果ID_EX沒有東西就不做
-    EX_MEM.ins = ID_EX.ins; // 把ID_EX的指令傳到EX_MEM
-    EX_MEM.valid = true; // EX_MEM在EX之後才會有指令
-    ID_EX.valid = false; // 用完了
+    if(!ID_EX.valid) return; // 如果ID_EX沒有指令，則跳過
 
+    EX_MEM.ins = ID_EX.ins; // 把ID_EX的指令傳到EX_MEM
+    EX_MEM.valid = true; // 設置EX_MEM有效
+    instructionMemory[PC-2].stage = "EX"; // 更新instructionMemory中的指令階段
+    ID_EX.valid = false; // 用完了ID_EX的指令
+
+    // 執行指令（計算等）
     if(EX_MEM.ins.opcode == "add") {
         registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] + registers[EX_MEM.ins.rt]; // rd = rs + rt
     } else if(EX_MEM.ins.opcode == "sub") {
@@ -85,13 +90,14 @@ void EX() {
     }
 }
 
-// lw rt, immediate(rs), sw rt, immediate(rs)
 void MEM() {
-    if(!EX_MEM.valid) return; // 如果EX_MEM沒有東西就不做
+    if(!EX_MEM.valid) return; // 如果EX_MEM沒有指令，則跳過
     MEM_WB.ins = EX_MEM.ins; // 把EX_MEM的指令傳到MEM_WB
-    MEM_WB.valid = true; // MEM_WB在MEM之後才會有指令
-    EX_MEM.valid = false; // 用完了
+    MEM_WB.valid = true; // 設置MEM_WB有效
 
+    instructionMemory[PC-3].stage = "MEM"; // 更新instructionMemory中的指令階段
+    EX_MEM.valid = false; // 用完了EX_MEM的指令
+    // 根據指令類型執行操作
     if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = memory[MEM_WB.ins.immediate]; // rt = mem[immediate]
     } else if(MEM_WB.ins.opcode == "sw") {
@@ -100,8 +106,8 @@ void MEM() {
 }
 
 void WB() {
-    if(!MEM_WB.valid) return; // 如果MEM_WB沒有東西就不做
-    
+    if(!MEM_WB.valid) return; // 如果MEM_WB沒有指令，則跳過
+    instructionMemory[PC-4].stage = "WB"; // 更新instructionMemory中的指令階段
     // 只有這三個有WB
     if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
         registers[MEM_WB.ins.rd] = registers[MEM_WB.ins.rs];
@@ -112,39 +118,37 @@ void WB() {
 }
 
 void readInput(const string& filename) {
+
     ifstream infile(filename);
     if(!infile) {
         cout << "Cannot open file.\n";
         return;
     }
     string line;
-    while (getline(infile, line)) { // 一行一行讀取指令
+    while (getline(infile, line)) { 
         Instruction ins;
         size_t pos = 0;
         // 讀取操作碼
         pos = line.find(" ");
         ins.opcode = line.substr(0, pos);
-        line.erase(0, pos + 1);  // 去掉操作碼部分
-
+        line.erase(0, pos + 1);  
+        //處理字串，得到暫存器編號
         if (ins.opcode == "lw" || ins.opcode == "sw") {
             string rt, rs, immediatePart;
 
-            // 讀取 $rt
-            pos = line.find(","); // 找到逗號的位置
-            rt = line.substr(0, pos); // 提取出 $rt 部分
-            ins.rt = stoi(rt.substr(1)); // 去掉 "$" 並轉換為整數
-            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+            pos = line.find(","); 
+            rt = line.substr(0, pos); 
+            ins.rt = stoi(rt.substr(1)); 
+            line.erase(0, pos + 2);
 
-            // 讀取 offset(base)，直到 "("
             pos = line.find("(");
-            immediatePart = line.substr(0, pos); // 提取 offset 部分
-            ins.immediate = stoi(immediatePart); // 轉換為整數
-            line.erase(0, pos + 1); // 去掉已經讀取過的部分
+            immediatePart = line.substr(0, pos); 
+            ins.immediate = stoi(immediatePart); 
+            line.erase(0, pos + 1); 
 
-            // 讀取 base，直到 ")"
             pos = line.find(")");
-            rs = line.substr(0, pos); // 提取 base 寄存器
-            ins.rs = stoi(rs.substr(1)); // 去掉 "$" 並轉換為整數
+            rs = line.substr(0, pos); 
+            ins.rs = stoi(rs.substr(1)); 
 
             cout << "Parsed I instruction - opcode: " << ins.opcode 
                 << ", rt: " << ins.rt 
@@ -174,21 +178,18 @@ void readInput(const string& filename) {
         } else if (ins.opcode == "add" || ins.opcode == "sub") {
             string rd, rs, rt;
 
-            // 讀取 rd
-            pos = line.find(","); // 找到逗號的位置
-            rd = line.substr(0, pos); // 提取出 rd 部分
-            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+            pos = line.find(","); 
+            rd = line.substr(0, pos); 
+            line.erase(0, pos + 2); 
 
-            // 讀取 rs
-            pos = line.find(","); // 找到第二個逗號的位置
-            rs = line.substr(0, pos); // 提取出 rs 部分
-            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+            pos = line.find(","); 
+            rs = line.substr(0, pos); 
+            line.erase(0, pos + 2); 
 
-            // 讀取 rt
-            rt = line; // 剩下的部分即為 rt
-            ins.rd = stoi(rd.substr(1)); // 去掉 "$" 並轉換為整數
-            ins.rs = stoi(rs.substr(1)); // 去掉 "$" 並轉換為整數
-            ins.rt = stoi(rt.substr(1)); // 去掉 "$" 並轉換為整數
+            rt = line; 
+            ins.rd = stoi(rd.substr(1)); 
+            ins.rs = stoi(rs.substr(1)); 
+            ins.rt = stoi(rt.substr(1)); 
 
             cout << "Parsed R instruction - opcode: " << ins.opcode 
                 << ", rd: " << ins.rd 
@@ -199,7 +200,12 @@ void readInput(const string& filename) {
     }
 }
 
-
+void Output() {
+    cout << "Cycle " << cycle << endl;
+    for(auto &i: instructionMemory) {
+        if(i.stage != "-") cout << i.opcode << " - Stage: " << i.stage << endl;
+    }
+}
 
 void simulate() {
     while(true) {
@@ -209,14 +215,16 @@ void simulate() {
         EX();
         ID();
         IF();
+        Output();
         if(!IF_ID.valid && !ID_EX.valid && !EX_MEM.valid && !MEM_WB.valid && PC >= instructionMemory.size()) break; // 如果全部都沒有指令了就結束
         cycle++;
     }
 }
 
+
 int main() {
     init();
-    readInput("../inputs/test4.txt");
+    readInput("../inputs/tt.txt");
     simulate();
     return 0;
 }
