@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <sstream>
 using namespace std;
 
 vector<int> registers(32, 1); // 預設值為 1
@@ -117,12 +118,88 @@ void readInput(const string& filename) {
         return;
     }
     string line;
-    while(getline(infile, line)) { // 一行一行讀ins
-        // 讀字串太煩了，誰來寫一下
+    while (getline(infile, line)) { // 一行一行讀取指令
         Instruction ins;
+        size_t pos = 0;
+        // 讀取操作碼
+        pos = line.find(" ");
+        ins.opcode = line.substr(0, pos);
+        line.erase(0, pos + 1);  // 去掉操作碼部分
+
+        if (ins.opcode == "lw" || ins.opcode == "sw") {
+            string rt, rs, immediatePart;
+
+            // 讀取 $rt
+            pos = line.find(","); // 找到逗號的位置
+            rt = line.substr(0, pos); // 提取出 $rt 部分
+            ins.rt = stoi(rt.substr(1)); // 去掉 "$" 並轉換為整數
+            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+
+            // 讀取 offset(base)，直到 "("
+            pos = line.find("(");
+            immediatePart = line.substr(0, pos); // 提取 offset 部分
+            ins.immediate = stoi(immediatePart); // 轉換為整數
+            line.erase(0, pos + 1); // 去掉已經讀取過的部分
+
+            // 讀取 base，直到 ")"
+            pos = line.find(")");
+            rs = line.substr(0, pos); // 提取 base 寄存器
+            ins.rs = stoi(rs.substr(1)); // 去掉 "$" 並轉換為整數
+
+            cout << "Parsed I instruction - opcode: " << ins.opcode 
+                << ", rt: " << ins.rt 
+                << ", rs: " << ins.rs 
+                << ", immediate: " << ins.immediate << endl;
+        } else if (ins.opcode == "beq") {
+            string rs, rt, immediatePart;
+
+            pos = line.find(",");
+            rs = line.substr(0, pos); 
+            line.erase(0, pos + 2);
+
+            pos = line.find(","); 
+            rt = line.substr(0, pos); 
+            line.erase(0, pos + 2); 
+
+            immediatePart = line; 
+            ins.immediate = stoi(immediatePart);
+
+            ins.rs = stoi(rs.substr(1));
+            ins.rt = stoi(rt.substr(1));
+
+            cout << "Parsed beq instruction - opcode: " << ins.opcode 
+                << ", rs: " << ins.rs 
+                << ", rt: " << ins.rt 
+                << ", immediate: " << ins.immediate << endl;
+        } else if (ins.opcode == "add" || ins.opcode == "sub") {
+            string rd, rs, rt;
+
+            // 讀取 rd
+            pos = line.find(","); // 找到逗號的位置
+            rd = line.substr(0, pos); // 提取出 rd 部分
+            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+
+            // 讀取 rs
+            pos = line.find(","); // 找到第二個逗號的位置
+            rs = line.substr(0, pos); // 提取出 rs 部分
+            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+
+            // 讀取 rt
+            rt = line; // 剩下的部分即為 rt
+            ins.rd = stoi(rd.substr(1)); // 去掉 "$" 並轉換為整數
+            ins.rs = stoi(rs.substr(1)); // 去掉 "$" 並轉換為整數
+            ins.rt = stoi(rt.substr(1)); // 去掉 "$" 並轉換為整數
+
+            cout << "Parsed R instruction - opcode: " << ins.opcode 
+                << ", rd: " << ins.rd 
+                << ", rs: " << ins.rs 
+                << ", rt: " << ins.rt << endl;
+        }
         instructionMemory.push_back(ins);
     }
 }
+
+
 
 void simulate() {
     while(true) {
@@ -139,7 +216,7 @@ void simulate() {
 
 int main() {
     init();
-    readInput("inputs/test3.txt");
+    readInput("../inputs/test4.txt");
     simulate();
     return 0;
 }
