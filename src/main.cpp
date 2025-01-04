@@ -50,6 +50,7 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 }
 
 void IF() {
+    if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; // 如果需要跳轉或 pipeline 被 flush，停止 fetch
     if(IF_ID.valid) return; // 如果IF_ID有指令了就不要再fetch
 
     if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內才能坐下去
@@ -89,12 +90,14 @@ void EX() {
     if (EX_MEM.ins.opcode == "beq") {
         // 若 rs == rt，branch taken
         if (registers[EX_MEM.ins.rs] == registers[EX_MEM.ins.rt]) {
-            // 在 IF 階段已經 PC++，所以這裡做 PC += (offset - 1) 才能正確跳到目標
-            PC += (EX_MEM.ins.immediate - 1);
+            // PC += immediate
+            PC += EX_MEM.ins.immediate; // 修正這裡，直接加上 immediate
 
             // Flush：清除未來 pipeline 階段中「已經抓到但還沒執行完」的指令
             IF_ID.valid = false;
             ID_EX.valid = false;
+            EX_MEM.valid = false; // 新增
+            MEM_WB.valid = false; // 新增
         }
         // 若 rs != rt，則 branch not taken，什麼都不做
     }
@@ -227,11 +230,16 @@ void simulate() {
         if(!IF_ID.valid && !ID_EX.valid && !EX_MEM.valid && !MEM_WB.valid && PC >= instructionMemory.size()) break; // 如果全部都沒有指令了就結束
         cycle++;
     }
+    // 打印暫存器值
+    cout << "Simulation complete. Register values:" << endl;
+    for (int i = 0; i < 32; ++i) {
+        cout << "$" << i << ": " << registers[i] << endl;
+    }
 }
 
 int main() {
     init();
-    readInput("../inputs/test4.txt");
+    readInput("../inputs/test.txt");
     simulate();
     return 0;
 }
