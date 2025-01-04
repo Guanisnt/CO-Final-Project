@@ -61,33 +61,13 @@ void IF() {
 
 void ID() {
     if(!IF_ID.valid) return; // 如果IF_ID沒有東西就不做
-    ID_EX.ins = IF_ID.ins;   // 把IF_ID的指令傳到ID_EX
+    ID_EX.ins = IF_ID.ins; // 把IF_ID的指令船到ID_EX
 
-    // 設定控制訊號
-    setControlSignals(ID_EX, ID_EX.ins.opcode);
-
-    if (ID_EX.ins.opcode == "beq") {
-        // 先讀取需要比較的暫存器值
-        int regValue1 = registers[ID_EX.ins.rs];
-        int regValue2 = registers[ID_EX.ins.rt];
-
-        // 如果 beq 條件成立 (rs == rt)
-        if (regValue1 == regValue2) {
-            // (a) 直接修改 PC -> 跳到分支目標
-            PC = PC + ID_EX.ins.immediate - 1; 
-
-            // (b) flush: 清空 IF_ID 和 ID_EX，避免錯誤指令繼續下去
-            IF_ID.valid = false;
-            ID_EX.valid = false;
-
-            // (c) return -> 不讓後續階段執行，等於插入氣泡
-            return;
-        }
-    }
+    // control signal設定
+    setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal\
 
     ID_EX.valid = true; // ID_EX在ID之後才會有指令
     IF_ID.valid = false; // 用完了
-
 }
 
 void EX() {
@@ -96,13 +76,27 @@ void EX() {
     EX_MEM.valid = true; // EX_MEM在EX之後才會有指令
     ID_EX.valid = false; // 用完了
 
-
+    // 先做一般的ALU運算
     if(EX_MEM.ins.opcode == "add") {
         registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] + registers[EX_MEM.ins.rt]; // rd = rs + rt
     } else if(EX_MEM.ins.opcode == "sub") {
         registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] - registers[EX_MEM.ins.rt]; // rd = rs - rt
     } else if(EX_MEM.ins.opcode == "lw" || EX_MEM.ins.opcode == "sw") {
         EX_MEM.ins.immediate = registers[EX_MEM.ins.rs] + (EX_MEM.ins.immediate<<2); // immediate = rs + (immediate<<2)
+    }
+
+    // 處理 beq (在 EX 階段真正判斷是否跳)
+    if (EX_MEM.ins.opcode == "beq") {
+        // 若 rs == rt，branch taken
+        if (registers[EX_MEM.ins.rs] == registers[EX_MEM.ins.rt]) {
+            // 在 IF 階段已經 PC++，所以這裡做 PC += (offset - 1) 才能正確跳到目標
+            PC += (EX_MEM.ins.immediate - 1);
+
+            // Flush：清除未來 pipeline 階段中「已經抓到但還沒執行完」的指令
+            IF_ID.valid = false;
+            ID_EX.valid = false;
+        }
+        // 若 rs != rt，則 branch not taken，什麼都不做
     }
 }
 
