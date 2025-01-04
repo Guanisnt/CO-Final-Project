@@ -61,13 +61,33 @@ void IF() {
 
 void ID() {
     if(!IF_ID.valid) return; // 如果IF_ID沒有東西就不做
-    ID_EX.ins = IF_ID.ins; // 把IF_ID的指令船到ID_EX
+    ID_EX.ins = IF_ID.ins;   // 把IF_ID的指令傳到ID_EX
 
-    // control signal設定
-    setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal\
+    // 設定控制訊號
+    setControlSignals(ID_EX, ID_EX.ins.opcode);
+
+    if (ID_EX.ins.opcode == "beq") {
+        // 先讀取需要比較的暫存器值
+        int regValue1 = registers[ID_EX.ins.rs];
+        int regValue2 = registers[ID_EX.ins.rt];
+
+        // 如果 beq 條件成立 (rs == rt)
+        if (regValue1 == regValue2) {
+            // (a) 直接修改 PC -> 跳到分支目標
+            PC = PC + ID_EX.ins.immediate - 1; 
+
+            // (b) flush: 清空 IF_ID 和 ID_EX，避免錯誤指令繼續下去
+            IF_ID.valid = false;
+            ID_EX.valid = false;
+
+            // (c) return -> 不讓後續階段執行，等於插入氣泡
+            return;
+        }
+    }
 
     ID_EX.valid = true; // ID_EX在ID之後才會有指令
     IF_ID.valid = false; // 用完了
+
 }
 
 void EX() {
@@ -75,6 +95,7 @@ void EX() {
     EX_MEM.ins = ID_EX.ins; // 把ID_EX的指令傳到EX_MEM
     EX_MEM.valid = true; // EX_MEM在EX之後才會有指令
     ID_EX.valid = false; // 用完了
+
 
     if(EX_MEM.ins.opcode == "add") {
         registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] + registers[EX_MEM.ins.rt]; // rd = rs + rt
