@@ -8,8 +8,9 @@ using namespace std;
 vector<int> registers(32, 1); // 預設值為 1
 vector<int> memory(32, 1);    // 預設值為 1
 
-int tmp_EX_MEM=0; //暫存ALU算出來的數，在EX被決定，在MEM(lw, sw)或WB(add, sub)才會操作該值
-int tmp_MEM_WB=0; //暫存lw要取出的memory，在MEM被決定，在WB才會被寫入register
+int tmp_EX=0;
+int tmp_MEM=0;
+int tmp_WB=0;
 
 //A代表rs、B代表rt
 //2 要從前指令拿 (在EX_MEM) EX hazard
@@ -63,7 +64,7 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 void IF() {
     //if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; //這會有問題，因為ID_EX.controlSignals[2]是Branch，不是Branch的時候也要fetch
     if(IF_ID.valid){
-        cout<< IF_ID.ins.opcode << ": IF" << endl;
+        if(stall) cout<< IF_ID.ins.opcode << ": IF" << endl;
         return; // 如果IF_ID有指令了就不要再fetch
     }
 
@@ -83,11 +84,7 @@ void ID() {
         ID_EX = IF_ID; // 把IF_ID的指令船到ID_EX
         ID_EX.valid = true; // 設置ID_EX有效
         IF_ID.valid = false; // 用完了IF_ID的指令
-    }else{
-        ID_EX = ID_EX; // 把IF_ID的指令船到ID_EX
-        ID_EX.valid = true; // 設置ID_EX有效
-        IF_ID.valid = false; // 用完了IF_ID的指令
-    }
+
 
         // control signal設定
     setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal
@@ -127,12 +124,10 @@ void ID() {
         }else if(MEM_WB.controlSignals[6] == 1 && MEM_WB.ins.rt == ID_EX.ins.rt){
             forwardB=3;
         }
-    }else if(ID_EX.ins.opcode == "lw" ){
-        // if(ID_EX.ins.rt == IF_ID.ins.rs || ID_EX.ins.rt == IF_ID.ins.rt){
-        //     stall = true;
-        // }
     }else if(ID_EX.ins.opcode == "sw" ) {
-        tmp_EX_MEM = tmp_MEM_WB;
+        if(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt ){
+            tmp_EX=tmp_WB;
+        }
     }else if(ID_EX.ins.opcode == "beq"){
         //前一個指令為R-format，有beq要比較的暫存器，並且會經過ALU
         if(EX_MEM.controlSignals[5] == 1 && EX_MEM.ins.rd && (EX_MEM.ins.rd == ID_EX.ins.rs || EX_MEM.ins.rd == ID_EX.ins.rt)){
@@ -144,6 +139,7 @@ void ID() {
         }else if(MEM_WB.controlSignals[3] == 1 && (MEM_WB.ins.rt == ID_EX.ins.rt || MEM_WB.ins.rt == ID_EX.ins.rs)){
             stall = 2;
         }
+    }
     }
     cout << ID_EX.ins.opcode << ": ID" << endl;
 }
@@ -162,22 +158,22 @@ void EX() {
         int tmp_rs = registers[EX_MEM.ins.rs], tmp_rt = registers[EX_MEM.ins.rt];
 
         // rs從前指令(在EX_MEM)
-        if(forwardA == 2) tmp_rs = tmp_EX_MEM; 
+        if(forwardA == 2) tmp_rs = tmp_MEM; 
         // rs從前前指令(在MEM_WB)
-        else if(forwardA == 1 || forwardA ==3) tmp_rs = tmp_MEM_WB;
+        else if(forwardA == 1 || forwardA ==3) tmp_rs = tmp_WB;
 
         // rt從前指令(在EX_MEM)
         if(forwardB == 2) {
-            if(EX_MEM.ins.opcode == "add") tmp_rt = tmp_EX_MEM; 
-            else tmp_rt = - tmp_EX_MEM;
+            if(EX_MEM.ins.opcode == "add") tmp_rt = tmp_MEM; 
+            else tmp_rt = - tmp_MEM;
         }
         // rt從前前指令(在EX_MEM)
         else if (forwardB == 1 || forwardB ==3){
-            if(EX_MEM.ins.opcode == "add") tmp_rt = tmp_MEM_WB; 
-            else tmp_rt = - tmp_MEM_WB;
+            if(EX_MEM.ins.opcode == "add") tmp_rt = tmp_WB; 
+            else tmp_rt = - tmp_WB;
         }
 
-        tmp_EX_MEM = tmp_rs + tmp_rt;
+        tmp_MEM = tmp_rs + tmp_rt;
         
     }else if(EX_MEM.ins.opcode == "lw" || EX_MEM.ins.opcode == "sw"){
         EX_MEM.ins.immediate = registers[EX_MEM.ins.rs] + (EX_MEM.ins.immediate>>2); // immediate = rs + (immediate>>2
@@ -211,14 +207,16 @@ void MEM() {
     EX_MEM.valid = false; // 用完了
 
     if(MEM_WB.ins.opcode == "lw") {
-        tmp_MEM_WB = memory[MEM_WB.ins.immediate];
+        tmp_WB = memory[MEM_WB.ins.immediate];
     } else if(MEM_WB.ins.opcode == "sw") {
         if(MEM_WB.controlSignals[5]==1 && MEM_WB.ins.rd && MEM_WB.ins.rd == MEM_WB.ins.rt){
-            memory[MEM_WB.ins.immediate] = tmp_MEM_WB;
+            memory[MEM_WB.ins.immediate] = tmp_MEM;
+            cout<<tmp_MEM<<endl;
+            cout<<memory[MEM_WB.ins.immediate]<<endl;
+            cout<<MEM_WB.ins.immediate<<endl;
         }
-        MEM_WB.valid=false;
     }else{
-        tmp_MEM_WB = tmp_EX_MEM;
+        tmp_WB = tmp_MEM;
     }
 
 
@@ -229,7 +227,10 @@ void WB() {
     if(!MEM_WB.valid) return; // 如果MEM_WB沒有指令，則跳過
     // 只有這三個有WB
     if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
-        registers[MEM_WB.ins.rd] = tmp_MEM_WB;
+        registers[MEM_WB.ins.rd] = tmp_MEM;
+        cout<<tmp_MEM<<endl;
+        cout<<registers[MEM_WB.ins.rd]<<endl;
+        cout<<MEM_WB.ins.rd<<endl;
     }
     if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = memory[MEM_WB.ins.immediate];
@@ -349,7 +350,7 @@ void simulate() {
 
 int main() {
     init();
-    readInput("../inputs/test3.txt");
+    readInput("../inputs/test2.txt");
     simulate();
     return 0;
 }
