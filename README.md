@@ -21,7 +21,7 @@
 - src\main.exe
 
 ## 備註
-換測資請改main.cpp裡的readInput的檔名，若要新增隱藏測資請放在inputs的資料夾
+換測資請改main.cpp裡的readInput的檔名，若要新增隱藏測資請放在inputs的資料夾，output也要改成相對應的檔名
 
 ## 開發環境設定
 以 Visual Studio Code 為例，使用下列設定檔：
