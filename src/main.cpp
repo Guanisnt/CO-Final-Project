@@ -8,8 +8,12 @@ using namespace std;
 vector<int> registers(32, 1); // 預設值為 1
 vector<int> memory(32, 1);    // 預設值為 1
 
+int tmp_EX_MEM=0; //暫存ALU算出來的數，在EX被決定，在MEM(lw, sw)或WB(add, sub)才會操作該值
+int tmp_MEM_WB=0; //暫存lw要取出的memory，在MEM被決定，在WB才會被寫入register
+
 int PC = 0;
 int cycle = 1;
+bool stall = false;
 
 struct Instruction {
     string opcode;   // lw, sw, add, sub, beq
@@ -61,11 +65,11 @@ void IF() {
 }
 
 void ID() {
-    if(!IF_ID.valid) return; // 如果IF_ID沒有東西就不做
+    if(!IF_ID.valid || stall) return; // 如果IF_ID沒有東西就不做
     ID_EX.ins = IF_ID.ins; // 把IF_ID的指令船到ID_EX
 
     // control signal設定
-    setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal\
+    setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal
 
     ID_EX.valid = true; // ID_EX在ID之後才會有指令
     IF_ID.valid = false; // 用完了
@@ -73,26 +77,82 @@ void ID() {
 
 void EX() {
     if(!ID_EX.valid) return; // 如果ID_EX沒有東西就不做
-    EX_MEM.ins.immediate = registers[ID_EX.ins.rs] + ID_EX.ins.immediate; // 正確計算位址
-    EX_MEM.ins = ID_EX.ins; // 把ID_EX的指令傳到EX_MEM
-    EX_MEM.valid = true; // EX_MEM在EX之後才會有指令
-    ID_EX.valid = false; // 用完了
+    ID_EX.ins.immediate = registers[ID_EX.ins.rs] + ID_EX.ins.immediate;
 
-    // 先做一般的ALU運算
-    if(EX_MEM.ins.opcode == "add") {
-        registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] + registers[EX_MEM.ins.rt]; // rd = rs + rt
-    } else if(EX_MEM.ins.opcode == "sub") {
-        registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] - registers[EX_MEM.ins.rt]; // rd = rs - rt
-    } else if(EX_MEM.ins.opcode == "lw" || EX_MEM.ins.opcode == "sw") {
-        EX_MEM.ins.immediate = registers[EX_MEM.ins.rs] + (EX_MEM.ins.immediate>>2); // immediate = rs + (immediate>>2)
+
+    if(ID_EX.ins.opcode == "add" || ID_EX.ins.opcode == "sub") {
+        //A代表rs、B代表rt
+        //2 要從前指令拿 (在EX_MEM) EX hazard
+        //1 要從前前指令拿 (在MEM_WB) MEM hazard
+        //3 代表前前指令是lw (在MEM_WB) Load-Use hazard 不用stall
+        //3 & 1(都是前前指令)的差別是，3是要判斷rt是不是目前指令的rs或rt，因為lw是寫入rt
+        int forwardA=0, forwardB=0;
+
+        //EX hazard 從前一指令 EX_MEM階段拿
+        if(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs){
+            forwardA=2;
+        }else if(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt){
+            forwardB=2;
+        }
+
+        //MEM hazard 從前前指令 controlSignals[5] => RegWrite
+        if( MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
+            !(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs)
+            && MEM_WB.ins.rd == ID_EX.ins.rs){
+            forwardA=1;
+        }else if(MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
+                !(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt)
+                && MEM_WB.ins.rd == ID_EX.ins.rt){
+            forwardB=1;
+        }
+        
+        //判斷前前指令是不是lw controlSignals[6] => MemtoReg
+        if(MEM_WB.controlSignals[6] == 1 && MEM_WB.ins.rt == ID_EX.ins.rs){
+            forwardA=3;
+        }else if(MEM_WB.controlSignals[6] == 1 && MEM_WB.ins.rt == ID_EX.ins.rt){
+            forwardB=3;
+        }
+
+        //計算
+        //先設tmp_rs，tmp_rt為沒有forwarding 直接從register拿資料
+        int tmp_rs = registers[ID_EX.ins.rs], tmp_rt = registers[ID_EX.ins.rt];
+
+        // rs從前指令(在EX_MEM)
+        if(forwardA == 2) tmp_rs = tmp_EX_MEM; 
+        // rs從前前指令(在MEM_WB)
+        else if(forwardA == 1 || forwardA ==3) tmp_rs = tmp_MEM_WB;
+
+        // rt從前指令(在EX_MEM)
+        if(forwardB == 2) {
+            if(EX_MEM.ins.opcode == "add") tmp_rt = tmp_EX_MEM; 
+            else tmp_rt = - tmp_EX_MEM;
+        }
+        // rt從前前指令(在EX_MEM)
+        else if (forwardB == 1 || forwardB ==3){
+            if(EX_MEM.ins.opcode == "add") tmp_rt = tmp_MEM_WB; 
+            else tmp_rt = - tmp_MEM_WB;
+        }
+
+        tmp_EX_MEM = tmp_rs + tmp_rt;
+        
+    }else if(ID_EX.ins.opcode == "lw" ){
+        ID_EX.ins.immediate = registers[ID_EX.ins.rs] + (ID_EX.ins.immediate>>2); // immediate = rs + (immediate>>2
+        if(ID_EX.ins.rt = IF_ID.ins.rs || ID_EX.ins.rt == IF_ID.ins.rt){
+            stall = true;
+        }
+    }else if(EX_MEM.ins.opcode == "sw" ) {
+        ID_EX.ins.immediate = registers[ID_EX.ins.rs] + (ID_EX.ins.immediate>>2); // immediate = rs + (immediate>>2)
+        if(ID_EX.ins.opcode =="sw"){
+            tmp_EX_MEM = tmp_MEM_WB;
+        }
     }
 
     // 處理 beq (在 EX 階段真正判斷是否跳)
-    if (EX_MEM.ins.opcode == "beq") {
+    if (ID_EX.ins.opcode == "beq") {
         // 若 rs == rt，branch taken
-        if (registers[EX_MEM.ins.rs] == registers[EX_MEM.ins.rt]) {
+        if (registers[ID_EX.ins.rs] == registers[ID_EX.ins.rt]) {
             // PC += immediate
-            PC += EX_MEM.ins.immediate; // 修正這裡，直接加上 immediate
+            PC += ID_EX.ins.immediate; // 修正這裡，直接加上 immediate
 
             // Flush：清除未來 pipeline 階段中「已經抓到但還沒執行完」的指令
             IF_ID.valid = false;
@@ -102,32 +162,42 @@ void EX() {
         }
         // 若 rs != rt，則 branch not taken，什麼都不做
     }
+
+    EX_MEM.ins = ID_EX.ins; // 把ID_EX的指令傳到EX_MEM
+    EX_MEM.valid = true; // EX_MEM在EX之後才會有指令
+    ID_EX.valid = false; // 用完了
 }
 
 // lw rt, immediate(rs), sw rt, immediate(rs)
 void MEM() {
     if(!EX_MEM.valid) return; // 如果EX_MEM沒有東西就不做
+
+    if(EX_MEM.ins.opcode == "lw") {
+        tmp_MEM_WB = memory[EX_MEM.ins.immediate];
+    } else if(EX_MEM.ins.opcode == "sw") {
+        if(MEM_WB.controlSignals[5]==1 && MEM_WB.ins.rd && MEM_WB.ins.rd == EX_MEM.ins.rt){
+            memory[MEM_WB.ins.immediate] = tmp_MEM_WB;
+        }
+
+    }else{
+        tmp_MEM_WB = tmp_EX_MEM;
+    }
+
     MEM_WB.ins = EX_MEM.ins; // 把EX_MEM的指令傳到MEM_WB
     MEM_WB.ins.immediate = EX_MEM.ins.immediate; // 把EX_MEM的immediate傳到MEM_WB
     MEM_WB.valid = true; // MEM_WB在MEM之後才會有指令
     EX_MEM.valid = false; // 用完了
-
-    if(MEM_WB.ins.opcode == "lw") {
-        registers[MEM_WB.ins.rt] = memory[MEM_WB.ins.immediate]; // rt = mem[immediate]
-    } else if(MEM_WB.ins.opcode == "sw") {
-        memory[MEM_WB.ins.immediate] = registers[MEM_WB.ins.rt]; // mem[immediate] = rt
-    }
 }
 
 void WB() {
     if(!MEM_WB.valid) return; // 如果MEM_WB沒有東西就不做
     
     // 只有這三個有WB
-    // if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
-    //     registers[MEM_WB.ins.rd] = registers[MEM_WB.ins.rs];
-    // }
+    if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
+        registers[MEM_WB.ins.rd] = tmp_MEM_WB;
+    }
     if(MEM_WB.ins.opcode == "lw") {
-        registers[MEM_WB.ins.rt] = registers[MEM_WB.ins.immediate];
+        registers[MEM_WB.ins.rt] = memory[MEM_WB.ins.immediate];
     }
     MEM_WB.valid = false; // 用完了
 }
@@ -224,6 +294,7 @@ void readInput(const string& filename) {
 
 void simulate() {
     while(true) {
+        stall = false;
         // 每次迴圈代表一個cycle
         WB();
         MEM();
@@ -232,6 +303,7 @@ void simulate() {
         IF();
         if(!IF_ID.valid && !ID_EX.valid && !EX_MEM.valid && !MEM_WB.valid && PC >= instructionMemory.size()) break; // 如果全部都沒有指令了就結束
         cycle++;
+        cout<<cycle;
     }
     // 打印暫存器值
     cout << "Simulation complete. Register values:" << endl;
@@ -247,7 +319,7 @@ void simulate() {
 
 int main() {
     init();
-    readInput("../inputs/test3.txt");
+    readInput("../inputs/test1.txt");
     simulate();
     return 0;
 }
