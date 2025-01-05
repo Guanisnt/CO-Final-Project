@@ -15,7 +15,6 @@ struct Instruction {
     string opcode;   // lw, sw, add, sub, beq
     int rs, rt, rd; // reg編號
     int immediate;
-    string stage="-"; // IF, ID, EX, MEM, WB
 };
 vector<Instruction> instructionMemory; // 指令記憶體
 
@@ -51,26 +50,27 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 }
 
 void IF() {
-    if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; // 如果需要跳轉或 pipeline 被 flush，停止 fetch
+    //if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; //這會有問題，因為ID_EX.controlSignals[2]是Branch，不是Branch的時候也要fetch
     if(IF_ID.valid) return; // 如果IF_ID有指令了就不要再fetch
 
     if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內
         IF_ID.ins = instructionMemory[PC]; // 把指令放到IF_ID
         IF_ID.valid = true; // 設置IF_ID有效
-        IF_ID.ins.stage = "IF"; // 設定這條指令的階段為 IF
-        instructionMemory[PC].stage = "IF"; // 更新instructionMemory中的指令階段
-        //PC++; // 增加PC以指向下一條指令
+        PC++; // 增加PC以指向下一條指令
+        cout<< IF_ID.ins.opcode << ": IF" << endl;
     }
-    PC++;
+
 }
 
 void ID() {
     if(!IF_ID.valid) return; // 如果IF_ID沒有指令，則跳過
 
     ID_EX.ins = IF_ID.ins; // 把IF_ID的指令傳到ID_EX
+    setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal
+
     ID_EX.valid = true; // 設置ID_EX有效
-    instructionMemory[PC-1].stage = "ID"; // 更新instructionMemory中的指令階段
     IF_ID.valid = false; // 用完了IF_ID的指令
+    cout << ID_EX.ins.opcode << ": ID" << endl;
 }
 
 void EX() {
@@ -78,9 +78,9 @@ void EX() {
     EX_MEM.ins.immediate = registers[ID_EX.ins.rs] + ID_EX.ins.immediate; // 正確計算位址
     EX_MEM.ins = ID_EX.ins; // 把ID_EX的指令傳到EX_MEM
     EX_MEM.valid = true; // 設置EX_MEM有效
-    instructionMemory[PC-2].stage = "EX"; // 更新instructionMemory中的指令階段
     ID_EX.valid = false; // 用完了ID_EX的指令
-
+    
+    cout << EX_MEM.ins.opcode << ": EX" << endl;
     // 先做一般的ALU運算
     if(EX_MEM.ins.opcode == "add") {
         registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] + registers[EX_MEM.ins.rt]; // rd = rs + rt
@@ -95,13 +95,12 @@ void EX() {
         // 若 rs == rt，branch taken
         if (registers[EX_MEM.ins.rs] == registers[EX_MEM.ins.rt]) {
             // PC += immediate
+            PC --; // 這裡是beq PC+1的地方
             PC += EX_MEM.ins.immediate; // 修正這裡，直接加上 immediate
 
             // Flush：清除未來 pipeline 階段中「已經抓到但還沒執行完」的指令
             IF_ID.valid = false;
             ID_EX.valid = false;
-            EX_MEM.valid = false; // 新增
-            MEM_WB.valid = false; // 新增
         }
         // 若 rs != rt，則 branch not taken，什麼都不做
     }
@@ -113,9 +112,7 @@ void MEM() {
     MEM_WB.ins.immediate = EX_MEM.ins.immediate; // 把EX_MEM的immediate傳到MEM_WB
     MEM_WB.valid = true; // MEM_WB在MEM之後才會有指令
     EX_MEM.valid = false; // 用完了
-
-    instructionMemory[PC-3].stage = "MEM"; // 更新instructionMemory中的指令階段
-    EX_MEM.valid = false; // 用完了EX_MEM的指令
+    cout << MEM_WB.ins.opcode << ": MEM" << endl;
     // 根據指令類型執行操作
     if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = memory[MEM_WB.ins.immediate]; // rt = mem[immediate]
@@ -126,7 +123,6 @@ void MEM() {
 
 void WB() {
     if(!MEM_WB.valid) return; // 如果MEM_WB沒有指令，則跳過
-    instructionMemory[PC-4].stage = "WB"; // 更新instructionMemory中的指令階段
     // 只有這三個有WB
     // if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
     //     registers[MEM_WB.ins.rd] = registers[MEM_WB.ins.rs];
@@ -134,6 +130,7 @@ void WB() {
     if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = registers[MEM_WB.ins.immediate];
     }
+    cout << MEM_WB.ins.opcode << ": WB" << endl;
     MEM_WB.valid = false; // 用完了
 }
 
@@ -220,26 +217,19 @@ void readInput(const string& filename) {
     }
 }
 
-void Output() {
-    cout << "Cycle " << cycle << endl;
-    for(auto &i: instructionMemory) {
-        if(i.stage != "-") cout << i.opcode << " - Stage: " << i.stage << endl;
-    }
-}
-
 void simulate() {
     while(true) {
         // 每次迴圈代表一個cycle
+        cout << "\nCycle " << cycle << endl;
         WB();
         MEM();
         EX();
         ID();
         IF();
-        Output();
         if(!IF_ID.valid && !ID_EX.valid && !EX_MEM.valid && !MEM_WB.valid && PC >= instructionMemory.size()) break; // 如果全部都沒有指令了就結束
         cycle++;
     }
-    // 打印暫存器值
+    //打印暫存器值
     cout << "Simulation complete. Register values:" << endl;
     for (int i = 0; i < 32; ++i) {
         cout << "$" << i << ": " << registers[i] << endl;
@@ -254,7 +244,7 @@ void simulate() {
 
 int main() {
     init();
-    readInput("../inputs/test3.txt");
+    readInput("../inputs/test4.txt");
     simulate();
     return 0;
 }
