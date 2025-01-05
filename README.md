@@ -26,7 +26,7 @@
 ## 開發環境設定
 以 Visual Studio Code 為例，使用下列設定檔：
 
-json
+```json
 {
     "configurations": [
         {
@@ -48,3 +48,4 @@ json
     ],
     "version": 4
 }
+```
