@@ -1,0 +1,54 @@
+Parsed I instruction - opcode: lw, rt: 8, rs: 0, immediate: 8
+Parsed beq instruction - opcode: beq, rs: 4, rt: 8, immediate: 1
+Parsed R instruction - opcode: sub, rd: 2, rs: 7, rt: 9
+Parsed I instruction - opcode: sw, rt: 2, rs: 0, immediate: 8
+
+Cycle 1
+lw: IF
+
+Cycle 2
+lw: ID
+beq: IF
+
+Cycle 3
+lw: EX RegDst=0 ALUSrc=1 Branch=0 MemRead=1 MemWrite=0 RegWrite=1 MemToReg=1
+beq: ID
+sub: IF
+
+Cycle 4
+lw: MEM Branch=0 MemRead=1 MemWrite=0 RegWrite=1 MemToReg=1
+beq: ID
+sub: IF
+
+Cycle 5
+lw: WB RegWrite=1 MemToReg=1
+beq: ID
+sub: IF
+
+Cycle 6
+beq: EX RegDst=X ALUSrc=0 Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sw: IF
+
+Cycle 7
+beq: MEM Branch=1 MemRead=0 MemWrite=0 RegWrite=0 MemToReg=X
+sw: ID
+
+Cycle 8
+beq: WB RegWrite=0 MemToReg=X
+sw: EX RegDst=X ALUSrc=1 Branch=0 MemRead=0 MemWrite=1 RegWrite=0 MemToReg=X
+
+Cycle 9
+sw: MEM Branch=0 MemRead=0 MemWrite=1 RegWrite=0 MemToReg=X
+
+Cycle 10
+sw: WB RegWrite=0 MemToReg=X
+
+Final Result:
+
+Total Cycles: 10
+
+Final Register Values:
+0 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 
+
+Final Memory Values:
+1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 
