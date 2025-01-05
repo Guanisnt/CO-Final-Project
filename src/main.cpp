@@ -54,14 +54,16 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 }
 
 void IF() {
-    if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; // 如果需要跳轉或 pipeline 被 flush，停止 fetch
+    //if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; //這會有問題，因為ID_EX.controlSignals[2]是Branch，不是Branch的時候也要fetch
     if(IF_ID.valid) return; // 如果IF_ID有指令了就不要再fetch
 
-    if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內才能坐下去
+    if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內
         IF_ID.ins = instructionMemory[PC]; // 把指令放到IF_ID
-        IF_ID.valid = true; // IF_ID在IF有指令了
-        PC++; // 應該是+4，但是這裡指令用vector存所以+1
+        IF_ID.valid = true; // 設置IF_ID有效
+        PC++; // 增加PC以指向下一條指令
+        cout<< IF_ID.ins.opcode << ": IF" << endl;
     }
+
 }
 
 void ID() {
@@ -71,8 +73,9 @@ void ID() {
     // control signal設定
     setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal
 
-    ID_EX.valid = true; // ID_EX在ID之後才會有指令
-    IF_ID.valid = false; // 用完了
+    ID_EX.valid = true; // 設置ID_EX有效
+    IF_ID.valid = false; // 用完了IF_ID的指令
+    cout << ID_EX.ins.opcode << ": ID" << endl;
 }
 
 void EX() {
@@ -152,13 +155,12 @@ void EX() {
         // 若 rs == rt，branch taken
         if (registers[ID_EX.ins.rs] == registers[ID_EX.ins.rt]) {
             // PC += immediate
+            PC --; // 這裡是beq PC+1的地方
             PC += ID_EX.ins.immediate; // 修正這裡，直接加上 immediate
 
             // Flush：清除未來 pipeline 階段中「已經抓到但還沒執行完」的指令
             IF_ID.valid = false;
             ID_EX.valid = false;
-            EX_MEM.valid = false; // 新增
-            MEM_WB.valid = false; // 新增
         }
         // 若 rs != rt，則 branch not taken，什麼都不做
     }
@@ -168,7 +170,6 @@ void EX() {
     ID_EX.valid = false; // 用完了
 }
 
-// lw rt, immediate(rs), sw rt, immediate(rs)
 void MEM() {
     if(!EX_MEM.valid) return; // 如果EX_MEM沒有東西就不做
 
@@ -187,11 +188,17 @@ void MEM() {
     MEM_WB.ins.immediate = EX_MEM.ins.immediate; // 把EX_MEM的immediate傳到MEM_WB
     MEM_WB.valid = true; // MEM_WB在MEM之後才會有指令
     EX_MEM.valid = false; // 用完了
+    cout << MEM_WB.ins.opcode << ": MEM" << endl;
+    // 根據指令類型執行操作
+    if(MEM_WB.ins.opcode == "lw") {
+        registers[MEM_WB.ins.rt] = memory[MEM_WB.ins.immediate]; // rt = mem[immediate]
+    } else if(MEM_WB.ins.opcode == "sw") {
+        memory[MEM_WB.ins.immediate] = registers[MEM_WB.ins.rt]; // mem[immediate] = rt
+    }
 }
 
 void WB() {
-    if(!MEM_WB.valid) return; // 如果MEM_WB沒有東西就不做
-    
+    if(!MEM_WB.valid) return; // 如果MEM_WB沒有指令，則跳過
     // 只有這三個有WB
     if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
         registers[MEM_WB.ins.rd] = tmp_MEM_WB;
@@ -199,43 +206,42 @@ void WB() {
     if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = memory[MEM_WB.ins.immediate];
     }
+    cout << MEM_WB.ins.opcode << ": WB" << endl;
     MEM_WB.valid = false; // 用完了
 }
 
 void readInput(const string& filename) {
+
     ifstream infile(filename);
     if(!infile) {
         cout << "Cannot open file.\n";
         return;
     }
     string line;
-    while (getline(infile, line)) { // 一行一行讀取指令
+    while (getline(infile, line)) { 
         Instruction ins;
         size_t pos = 0;
         // 讀取操作碼
         pos = line.find(" ");
         ins.opcode = line.substr(0, pos);
-        line.erase(0, pos + 1);  // 去掉操作碼部分
-
+        line.erase(0, pos + 1);  
+        //處理字串，得到暫存器編號
         if (ins.opcode == "lw" || ins.opcode == "sw") {
             string rt, rs, immediatePart;
 
-            // 讀取 $rt
-            pos = line.find(","); // 找到逗號的位置
-            rt = line.substr(0, pos); // 提取出 $rt 部分
-            ins.rt = stoi(rt.substr(1)); // 去掉 "$" 並轉換為整數
-            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+            pos = line.find(","); 
+            rt = line.substr(0, pos); 
+            ins.rt = stoi(rt.substr(1)); 
+            line.erase(0, pos + 2);
 
-            // 讀取 offset(base)，直到 "("
             pos = line.find("(");
-            immediatePart = line.substr(0, pos); // 提取 offset 部分
-            ins.immediate = stoi(immediatePart); // 轉換為整數
-            line.erase(0, pos + 1); // 去掉已經讀取過的部分
+            immediatePart = line.substr(0, pos); 
+            ins.immediate = stoi(immediatePart); 
+            line.erase(0, pos + 1); 
 
-            // 讀取 base，直到 ")"
             pos = line.find(")");
-            rs = line.substr(0, pos); // 提取 base 寄存器
-            ins.rs = stoi(rs.substr(1)); // 去掉 "$" 並轉換為整數
+            rs = line.substr(0, pos); 
+            ins.rs = stoi(rs.substr(1)); 
 
             cout << "Parsed I instruction - opcode: " << ins.opcode 
                 << ", rt: " << ins.rt 
@@ -265,21 +271,18 @@ void readInput(const string& filename) {
         } else if (ins.opcode == "add" || ins.opcode == "sub") {
             string rd, rs, rt;
 
-            // 讀取 rd
-            pos = line.find(","); // 找到逗號的位置
-            rd = line.substr(0, pos); // 提取出 rd 部分
-            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+            pos = line.find(","); 
+            rd = line.substr(0, pos); 
+            line.erase(0, pos + 2); 
 
-            // 讀取 rs
-            pos = line.find(","); // 找到第二個逗號的位置
-            rs = line.substr(0, pos); // 提取出 rs 部分
-            line.erase(0, pos + 2); // 去掉已經讀取過的部分
+            pos = line.find(","); 
+            rs = line.substr(0, pos); 
+            line.erase(0, pos + 2); 
 
-            // 讀取 rt
-            rt = line; // 剩下的部分即為 rt
-            ins.rd = stoi(rd.substr(1)); // 去掉 "$" 並轉換為整數
-            ins.rs = stoi(rs.substr(1)); // 去掉 "$" 並轉換為整數
-            ins.rt = stoi(rt.substr(1)); // 去掉 "$" 並轉換為整數
+            rt = line; 
+            ins.rd = stoi(rd.substr(1)); 
+            ins.rs = stoi(rs.substr(1)); 
+            ins.rt = stoi(rt.substr(1)); 
 
             cout << "Parsed R instruction - opcode: " << ins.opcode 
                 << ", rd: " << ins.rd 
@@ -290,12 +293,11 @@ void readInput(const string& filename) {
     }
 }
 
-
-
 void simulate() {
     while(true) {
         stall = false;
         // 每次迴圈代表一個cycle
+        cout << "\nCycle " << cycle << endl;
         WB();
         MEM();
         EX();
@@ -305,7 +307,7 @@ void simulate() {
         cycle++;
         cout<<cycle;
     }
-    // 打印暫存器值
+    //打印暫存器值
     cout << "Simulation complete. Register values:" << endl;
     for (int i = 0; i < 32; ++i) {
         cout << "$" << i << ": " << registers[i] << endl;
@@ -317,9 +319,10 @@ void simulate() {
     }
 }
 
+
 int main() {
     init();
-    readInput("../inputs/test1.txt");
+    readInput("../inputs/test4.txt");
     simulate();
     return 0;
 }
