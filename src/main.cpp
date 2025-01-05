@@ -5,6 +5,8 @@
 #include <sstream>
 using namespace std;
 
+ofstream outfile; // Replace with your output file name
+
 vector<int> registers(32, 1); // 預設值為 1
 vector<int> memory(32, 1);    // 預設值為 1
 
@@ -64,7 +66,7 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 void IF() {
     //if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; //這會有問題，因為ID_EX.controlSignals[2]是Branch，不是Branch的時候也要fetch
     // if(IF_ID.valid){
-    //     cout<< IF_ID.ins.opcode << ": IF" << endl;
+    //     outfile<< IF_ID.ins.opcode << ": IF" << endl;
     //     return; // 如果IF_ID有指令了就不要再fetch
     // }
 
@@ -72,7 +74,7 @@ void IF() {
         IF_ID.ins = instructionMemory[PC]; // 把指令放到IF_ID
         IF_ID.valid = true; // 設置IF_ID有效
         if(!stall_ID) PC++; // 增加PC以指向下一條指令
-        cout<< IF_ID.ins.opcode << ": IF" << endl;
+        outfile<< IF_ID.ins.opcode << ": IF" << endl;
     }
 
 }
@@ -81,7 +83,7 @@ void ID() {
     if(!IF_ID.valid) return; // 如果IF_ID沒有東西就不做
 
     if(!stall_ID){
-        // cout<<"not stall\n";
+        // outfile<<"not stall\n";
         ID_EX = IF_ID; // 把IF_ID的指令船到ID_EX
         ID_EX.valid = false; // 設置ID_EX有效
         IF_ID.valid = false; // 用完了IF_ID的指令
@@ -163,7 +165,7 @@ void ID() {
             }
         }
     if(!stall_ID) ID_EX.valid=true;
-    cout << ID_EX.ins.opcode << ": ID" << endl;
+    outfile << ID_EX.ins.opcode << ": ID" << endl;
 }
 
 void EX() {
@@ -211,7 +213,7 @@ void EX() {
         if(forwardA == 2) tmp_rs = tmp_MEM;
         if(forwardB == 2) tmp_rt = tmp_MEM; 
         // 若 rs == rt，branch taken
-        cout<<tmp_rs<<' '<<tmp_rt<<endl;
+        //outfile<<tmp_rs<<' '<<tmp_rt<<endl;
         if (tmp_rs == tmp_rt) {
             // return;
             // PC += immediate
@@ -224,8 +226,26 @@ void EX() {
         // 若 rs != rt，則 branch not taken，什麼都不做
     }
 
+    outfile << EX_MEM.ins.opcode << ": EX ";
+    if(EX_MEM.ins.opcode == "sw" || EX_MEM.ins.opcode == "beq"){
+        outfile << "RegDst=" << "X" << " "; // RegDst control signal
+        outfile << "ALUSrc=" << EX_MEM.controlSignals[0] << " "; // ALUSrc control signal
+        outfile << "Branch=" << EX_MEM.controlSignals[2] << " "; // Branch control signal
+        outfile << "MemRead=" << EX_MEM.controlSignals[3] << " "; // MemRead control signal
+        outfile << "MemWrite=" << EX_MEM.controlSignals[4] << " "; // MemWrite control signal
+        outfile << "RegWrite=" << EX_MEM.controlSignals[5] << " "; // RegWrite control signal
+        outfile << "MemToReg=" << "X" << endl; // MemToReg control signal
+    }
+    else{
+        outfile << "RegDst=" << EX_MEM.controlSignals[1] << " "; // RegDst control signal
+        outfile << "ALUSrc=" << EX_MEM.controlSignals[0] << " "; // ALUSrc control signal
+        outfile << "Branch=" << EX_MEM.controlSignals[2] << " "; // Branch control signal
+        outfile << "MemRead=" << EX_MEM.controlSignals[3] << " "; // MemRead control signal
+        outfile << "MemWrite=" << EX_MEM.controlSignals[4] << " "; // MemWrite control signal
+        outfile << "RegWrite=" << EX_MEM.controlSignals[5] << " "; // RegWrite control signal
+        outfile << "MemToReg=" << EX_MEM.controlSignals[6] << endl; // MemToReg control signal
+    }
     
-    cout << EX_MEM.ins.opcode << ": EX" << endl;
 }
 
 void MEM() {
@@ -248,21 +268,45 @@ void MEM() {
     MEM_WB.valid = true; // MEM_WB在MEM之後才會有指令
     EX_MEM.valid = false; // 用完了
 
+    outfile << MEM_WB.ins.opcode << ": MEM ";
+    if(EX_MEM.ins.opcode == "sw" || EX_MEM.ins.opcode == "beq"){
+        outfile << "Branch=" << MEM_WB.controlSignals[2] << " "; // Branch control signal
+        outfile << "MemRead=" << MEM_WB.controlSignals[3] << " "; // MemRead control signal
+        outfile << "MemWrite=" << MEM_WB.controlSignals[4] << " "; // MemWrite control signal
+        outfile << "RegWrite=" << MEM_WB.controlSignals[5] << " "; // RegWrite control signal
+        outfile << "MemToReg=" << "X" << endl; // MemToReg control signal
+    }
+    else{
+        outfile << "Branch=" << MEM_WB.controlSignals[2] << " "; // Branch control signal
+        outfile << "MemRead=" << MEM_WB.controlSignals[3] << " "; // MemRead control signal
+        outfile << "MemWrite=" << MEM_WB.controlSignals[4] << " "; // MemWrite control signal
+        outfile << "RegWrite=" << MEM_WB.controlSignals[5] << " "; // RegWrite control signal
+        outfile << "MemToReg=" << MEM_WB.controlSignals[6] << endl; // MemToReg control signal
+    }
 
-    cout << MEM_WB.ins.opcode << ": MEM" << endl;
 }
 
 void WB() {
     if(!MEM_WB.valid) return; // 如果MEM_WB沒有指令，則跳過
     // 只有這三個有WB
     if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
-        cout<<registers[MEM_WB.ins.rd]<<' '<<MEM_WB.ins.rd<<' '<<tmp_WB;
+        //outfile<<registers[MEM_WB.ins.rd]<<' '<<MEM_WB.ins.rd<<' '<<tmp_WB;
         registers[MEM_WB.ins.rd] = tmp_WB;
     }
     if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = tmp_WB;
     }
-    cout << MEM_WB.ins.opcode << ": WB" << endl;
+
+    outfile << MEM_WB.ins.opcode << ": WB ";
+    if(EX_MEM.ins.opcode == "sw" || EX_MEM.ins.opcode == "beq"){
+        outfile << "RegWrite=" << MEM_WB.controlSignals[5] << " "; // RegWrite control signal
+        outfile << "MemToReg=" << "X" << endl; // MemToReg control signal
+    }
+    else{
+        outfile << "RegWrite=" << MEM_WB.controlSignals[5] << " "; // RegWrite control signal
+        outfile << "MemToReg=" << MEM_WB.controlSignals[6] << endl; // MemToReg control signal
+    }
+    
     MEM_WB.valid = false; // 用完了
 }
 
@@ -270,7 +314,7 @@ void readInput(const string& filename) {
 
     ifstream infile(filename);
     if(!infile) {
-        cout << "Cannot open file.\n";
+        outfile << "Cannot open file.\n";
         return;
     }
     string line;
@@ -299,7 +343,7 @@ void readInput(const string& filename) {
             rs = line.substr(0, pos); 
             ins.rs = stoi(rs.substr(1)); 
 
-            cout << "Parsed I instruction - opcode: " << ins.opcode 
+            outfile << "Parsed I instruction - opcode: " << ins.opcode 
                 << ", rt: " << ins.rt 
                 << ", rs: " << ins.rs 
                 << ", immediate: " << ins.immediate << endl;
@@ -320,7 +364,7 @@ void readInput(const string& filename) {
             ins.rs = stoi(rs.substr(1));
             ins.rt = stoi(rt.substr(1));
 
-            cout << "Parsed beq instruction - opcode: " << ins.opcode 
+            outfile << "Parsed beq instruction - opcode: " << ins.opcode 
                 << ", rs: " << ins.rs 
                 << ", rt: " << ins.rt 
                 << ", immediate: " << ins.immediate << endl;
@@ -340,7 +384,7 @@ void readInput(const string& filename) {
             ins.rs = stoi(rs.substr(1)); 
             ins.rt = stoi(rt.substr(1)); 
 
-            cout << "Parsed R instruction - opcode: " << ins.opcode 
+            outfile << "Parsed R instruction - opcode: " << ins.opcode 
                 << ", rd: " << ins.rd 
                 << ", rs: " << ins.rs 
                 << ", rt: " << ins.rt << endl;
@@ -352,7 +396,7 @@ void readInput(const string& filename) {
 void simulate() {
     while(true) {
         // 每次迴圈代表一個cycle
-        cout << "\nCycle " << cycle << endl;
+        outfile << "\nCycle " << cycle << endl;
         WB();
         MEM();
         EX();
@@ -361,22 +405,32 @@ void simulate() {
         if(!IF_ID.valid && !ID_EX.valid && !EX_MEM.valid && !MEM_WB.valid && PC >= instructionMemory.size()) break; // 如果全部都沒有指令了就結束
         cycle++;
     }
+    outfile<<"\nFinal Result:"<<endl;
+    outfile<<"\nTotal Cycles: "<<cycle<<endl<<endl;
     //打印暫存器值
-    cout << "Simulation complete. Register values:" << endl;
+    outfile << "Final Register Values:" << endl;
     for (int i = 0; i < 32; ++i) {
-        cout << "$" << i << ": " << registers[i] << endl;
+        outfile << registers[i] << " ";
     }
+    outfile << endl << endl;
     //打印記憶體值
-    cout << "Memory values:" << endl;
+    outfile << "Final Memory Values:" << endl;
     for (int i = 0; i < 32; ++i) {
-        cout << "w[" << i << "]: " << memory[i] << endl;
+        outfile << memory[i] << " ";
     }
+    outfile << endl;
 }
 
 
 int main() {
+    outfile.open("../outputs/test6.txt");
+    if (!outfile) {
+        cerr << "Error opening output file!" << endl;
+        return 1;
+    }
+
     init();
-    readInput("../inputs/test8.txt");
+    readInput("../inputs/test6.txt");
     simulate();
     return 0;
 }
