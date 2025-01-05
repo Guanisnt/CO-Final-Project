@@ -21,9 +21,7 @@ int forwardA=0, forwardB=0;
 
 int PC = 0;
 int cycle = 1;
-int stall = 0;
-bool stall_IF=false, stall_ID=false,stall_EX=false;
-bool continue_stall=false;
+bool stall_IF=false, stall_ID=false;
 
 struct Instruction {
     string opcode;   // lw, sw, add, sub, beq
@@ -65,99 +63,111 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 
 void IF() {
     //if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; //這會有問題，因為ID_EX.controlSignals[2]是Branch，不是Branch的時候也要fetch
-    if(IF_ID.valid){
-        return; // 如果IF_ID有指令了就不要再fetch
-    }
+    // if(IF_ID.valid){
+    //     cout<< IF_ID.ins.opcode << ": IF" << endl;
+    //     return; // 如果IF_ID有指令了就不要再fetch
+    // }
 
     if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內
         IF_ID.ins = instructionMemory[PC]; // 把指令放到IF_ID
         IF_ID.valid = true; // 設置IF_ID有效
-        if(stall!=1 && !continue_stall) PC++; // 增加PC以指向下一條指令
+        if(!stall_ID) PC++; // 增加PC以指向下一條指令
         cout<< IF_ID.ins.opcode << ": IF" << endl;
     }
+
 }
 
 void ID() {
     if(!IF_ID.valid) return; // 如果IF_ID沒有東西就不做
 
-    if(stall!=1){
+    if(!stall_ID){
         // cout<<"not stall\n";
         ID_EX = IF_ID; // 把IF_ID的指令船到ID_EX
-        ID_EX.valid = true; // 設置ID_EX有效
+        ID_EX.valid = false; // 設置ID_EX有效
         IF_ID.valid = false; // 用完了IF_ID的指令
     }
 
         // control signal設定
-        setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal
+    setControlSignals(ID_EX, ID_EX.ins.opcode); // 根據opcode設定control signal
 
-
-        //判斷需不需要Forwarding Stall
+        stall_ID=false;
+        forwardA=0,forwardB=0;
+        //判斷需不需要Forwarding&Stall
         if(ID_EX.ins.opcode == "add" || ID_EX.ins.opcode == "sub") {
             
             //EX hazard 從前一指令 EX_MEM階段拿
-            if(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs){
+            if( EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs){
                 forwardA=2;
-                continue_stall = false;
-            }else if(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt){
+                // ID_EX.valid=true;
+            }
+            if( EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt){
                 forwardB=2;
-                continue_stall = false;
+                // ID_EX.valid=true;
             }
 
             //MEM hazard 從前前指令 controlSignals[5] => RegWrite
-            if( MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
-                !(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs)
+            if( MEM_WB.valid && MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
+                !(EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs)
                 && MEM_WB.ins.rd == ID_EX.ins.rs){
                 forwardA=1;
-                continue_stall = false;
-            }else if(MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
-                    !(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt)
+            }
+            if( MEM_WB.valid && MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
+                    !(EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt)
                     && MEM_WB.ins.rd == ID_EX.ins.rt){
                 forwardB=1;
-                continue_stall = false;
             }
 
             //判斷前指令是不是lw controlSignals[6] => MemtoReg
-            if(EX_MEM.controlSignals[6] == 1 && EX_MEM.ins.rt == ID_EX.ins.rs){
-                if(stall==0) stall = 2;
-                else continue_stall = true;
-            }else if(EX_MEM.controlSignals[6] == 1 && EX_MEM.ins.rt == ID_EX.ins.rt){
-                if(stall==0) stall = 2;
-                else continue_stall = true;
+            if(EX_MEM.valid && EX_MEM.controlSignals[6] == 1 && EX_MEM.ins.rt == ID_EX.ins.rs){
+                stall_ID = true;
+            }
+            if(EX_MEM.valid && EX_MEM.controlSignals[6] == 1 && EX_MEM.ins.rt == ID_EX.ins.rt){
+                stall_ID = true;
             }
             
             //判斷前前指令是不是lw controlSignals[6] => MemtoReg
-            if(MEM_WB.controlSignals[6] == 1 && MEM_WB.ins.rt == ID_EX.ins.rs){
+            if(MEM_WB.valid && MEM_WB.controlSignals[6] == 1 && MEM_WB.ins.rt == ID_EX.ins.rs
+                && !(EX_MEM.valid && EX_MEM.controlSignals[6] == 1 && EX_MEM.ins.rt == ID_EX.ins.rs)
+                && !(EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs)
+                && !( MEM_WB.valid && MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
+                !(EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rs)
+                && MEM_WB.ins.rd == ID_EX.ins.rs)){
                 forwardA=3;
-                continue_stall = false;
-            }else if(MEM_WB.controlSignals[6] == 1 && MEM_WB.ins.rt == ID_EX.ins.rt){
+                // ID_EX.valid=true;
+            }
+            if( MEM_WB.valid && MEM_WB.controlSignals[6] == 1 && MEM_WB.ins.rt == ID_EX.ins.rt
+                && !(EX_MEM.valid && EX_MEM.controlSignals[6] == 1 && EX_MEM.ins.rt == ID_EX.ins.rt)
+                && !(EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt)
+                && !( MEM_WB.valid && MEM_WB.controlSignals[5] == 1 && MEM_WB.ins.rd &&
+                    !(EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt)
+                    && MEM_WB.ins.rd == ID_EX.ins.rt)){
                 forwardB=3;
-                continue_stall = false;
+                // ID_EX.valid=true;
             }
         }else if(ID_EX.ins.opcode == "sw" ) {
-            if(EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt ){
+            if( EX_MEM.valid && EX_MEM.controlSignals[5]==1 && EX_MEM.ins.rd && EX_MEM.ins.rd == ID_EX.ins.rt ){
                 tmp_EX=tmp_WB;
-                continue_stall = false;
+                // ID_EX.valid=true;
             }
         }else if(ID_EX.ins.opcode == "beq"){
             //前一個指令為R-format，有beq要比較的暫存器，並且會經過ALU
-            if(EX_MEM.controlSignals[5] == 1 && EX_MEM.ins.rd && (EX_MEM.ins.rd == ID_EX.ins.rs || EX_MEM.ins.rd == ID_EX.ins.rt)){
-                if(stall==0) stall = 2;
-                else continue_stall=true;
+            if( EX_MEM.valid && EX_MEM.controlSignals[5] == 1 && EX_MEM.ins.rd && (EX_MEM.ins.rd == ID_EX.ins.rs || EX_MEM.ins.rd == ID_EX.ins.rt)){
+                stall_ID = true;
             //前一個指令為lw，存入暫存器rt是beq要比較的暫存器之一
-            }else if(EX_MEM.controlSignals[3] == 1 && (EX_MEM.ins.rt == ID_EX.ins.rt || EX_MEM.ins.rt == ID_EX.ins.rs)){
-                if(stall==0) stall = 2;
-                else continue_stall=true;
+            }else if( EX_MEM.valid && EX_MEM.controlSignals[3] == 1 && (EX_MEM.ins.rt == ID_EX.ins.rt || EX_MEM.ins.rt == ID_EX.ins.rs)){
+                stall_ID = true;
             //前前指令為lw，存入暫存器rt是beq要比較的暫存器之一
-            }else if(MEM_WB.controlSignals[3] == 1 && (MEM_WB.ins.rt == ID_EX.ins.rt || MEM_WB.ins.rt == ID_EX.ins.rs)){
-                if(stall==0) stall = 2;
-                else continue_stall=true;
+            }
+            if( MEM_WB.valid && MEM_WB.controlSignals[3] == 1 && (MEM_WB.ins.rt == ID_EX.ins.rt || MEM_WB.ins.rt == ID_EX.ins.rs)){
+                stall_ID = true;
             }
         }
+    if(!stall_ID) ID_EX.valid=true;
     cout << ID_EX.ins.opcode << ": ID" << endl;
 }
 
 void EX() {
-    if(!ID_EX.valid || stall || continue_stall) return; // 如果ID_EX沒有東西就不做
+    if(!ID_EX.valid) return; // 如果ID_EX沒有東西就不做
 
     EX_MEM.ins.immediate = registers[EX_MEM.ins.rs] + EX_MEM.ins.immediate;
     EX_MEM = ID_EX; // 把ID_EX的指令傳到EX_MEM
@@ -169,11 +179,10 @@ void EX() {
         //計算
         //先設tmp_rs，tmp_rt為沒有forwarding 直接從register拿資料
         int tmp_rs = registers[EX_MEM.ins.rs], tmp_rt = registers[EX_MEM.ins.rt];
-
         // rs從前指令(在EX_MEM)
         if(forwardA == 2) tmp_rs = tmp_MEM; 
         // rs從前前指令(在MEM_WB)
-        else if(forwardA == 1 || forwardA ==3) tmp_rs = tmp_WB;
+        // else if(forwardA == 1 || forwardA ==3) tmp_rs = tmp_WB;
 
         // rt從前指令(在EX_MEM)
         if(forwardB == 2) {
@@ -181,9 +190,8 @@ void EX() {
             else tmp_rt = - tmp_MEM;
         }
         // rt從前前指令(在EX_MEM)
-        else if (forwardB == 1 || forwardB ==3){
-            if(EX_MEM.ins.opcode == "add") tmp_rt = tmp_WB; 
-            else tmp_rt = - tmp_WB;
+        else{
+            if(EX_MEM.ins.opcode == "sub") tmp_rt = -tmp_rt; 
         }
 
         tmp_MEM = tmp_rs + tmp_rt;
@@ -199,12 +207,16 @@ void EX() {
 
     // 處理 beq (在 EX 階段真正判斷是否跳)
     if (EX_MEM.ins.opcode == "beq") {
+        int tmp_rs = registers[EX_MEM.ins.rs], tmp_rt = registers[EX_MEM.ins.rt];
+        if(forwardA == 2) tmp_rs = tmp_MEM;
+        if(forwardB == 2) tmp_rt = tmp_MEM; 
         // 若 rs == rt，branch taken
-        if (registers[EX_MEM.ins.rs] == registers[EX_MEM.ins.rt]) {
+        cout<<tmp_rs<<' '<<tmp_rt<<endl;
+        if (tmp_rs == tmp_rt) {
+            // return;
             // PC += immediate
             PC --; // 這裡是beq PC+1的地方
             PC += EX_MEM.ins.immediate; // 修正這裡，直接加上 immediate
-
             // Flush：清除未來 pipeline 階段中「已經抓到但還沒執行完」的指令
             IF_ID.valid = false;
             ID_EX.valid = false;
@@ -224,6 +236,8 @@ void MEM() {
     } else if(EX_MEM.ins.opcode == "sw") {
         if(MEM_WB.controlSignals[5]==1 && MEM_WB.ins.rd && MEM_WB.ins.rd == EX_MEM.ins.rt){
             memory[EX_MEM.ins.immediate] = tmp_MEM;
+        }else{
+            memory[EX_MEM.ins.immediate] = registers[EX_MEM.ins.rt];
         }
     }else{
         tmp_WB = tmp_MEM;
@@ -242,7 +256,8 @@ void WB() {
     if(!MEM_WB.valid) return; // 如果MEM_WB沒有指令，則跳過
     // 只有這三個有WB
     if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
-        registers[MEM_WB.ins.rd] = tmp_MEM;
+        cout<<registers[MEM_WB.ins.rd]<<' '<<MEM_WB.ins.rd<<' '<<tmp_WB;
+        registers[MEM_WB.ins.rd] = tmp_WB;
     }
     if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = tmp_WB;
@@ -336,7 +351,6 @@ void readInput(const string& filename) {
 
 void simulate() {
     while(true) {
-        if(stall) stall--;
         // 每次迴圈代表一個cycle
         cout << "\nCycle " << cycle << endl;
         WB();
@@ -362,7 +376,7 @@ void simulate() {
 
 int main() {
     init();
-    readInput("../inputs/test3.txt");
+    readInput("../inputs/test8.txt");
     simulate();
     return 0;
 }
