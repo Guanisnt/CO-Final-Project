@@ -1,1 +1,1 @@
-EX_MEM.ins.immediate = registers[ID_EX.ins.rs] + ID_EX.ins.immediate; // 正確計算位址
+        cout<<"???" <<ID_EX.ins.opcode<<ID_EX.ins.rt<<endl;
