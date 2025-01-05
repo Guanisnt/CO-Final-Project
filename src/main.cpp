@@ -51,7 +51,8 @@ void setControlSignals(PipelineRegister &reg, string &opcode) {
 }
 
 void IF() {
-    if(IF_ID.valid) return; // 如果IF_ID已經有指令，則跳過
+    if (IF_ID.valid || ID_EX.valid && ID_EX.controlSignals[2]) return; // 如果需要跳轉或 pipeline 被 flush，停止 fetch
+    if(IF_ID.valid) return; // 如果IF_ID有指令了就不要再fetch
 
     if(PC < instructionMemory.size()) { // 如果PC還在指令範圍內
         IF_ID.ins = instructionMemory[PC]; // 把指令放到IF_ID
@@ -73,27 +74,45 @@ void ID() {
 }
 
 void EX() {
-    if(!ID_EX.valid) return; // 如果ID_EX沒有指令，則跳過
-
+    if(!ID_EX.valid) return; // 如果ID_EX沒有東西就不做
+    EX_MEM.ins.immediate = registers[ID_EX.ins.rs] + ID_EX.ins.immediate; // 正確計算位址
     EX_MEM.ins = ID_EX.ins; // 把ID_EX的指令傳到EX_MEM
     EX_MEM.valid = true; // 設置EX_MEM有效
     instructionMemory[PC-2].stage = "EX"; // 更新instructionMemory中的指令階段
     ID_EX.valid = false; // 用完了ID_EX的指令
 
-    // 執行指令（計算等）
+    // 先做一般的ALU運算
     if(EX_MEM.ins.opcode == "add") {
         registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] + registers[EX_MEM.ins.rt]; // rd = rs + rt
     } else if(EX_MEM.ins.opcode == "sub") {
         registers[EX_MEM.ins.rd] = registers[EX_MEM.ins.rs] - registers[EX_MEM.ins.rt]; // rd = rs - rt
     } else if(EX_MEM.ins.opcode == "lw" || EX_MEM.ins.opcode == "sw") {
-        EX_MEM.ins.immediate = registers[EX_MEM.ins.rs] + (EX_MEM.ins.immediate<<2); // immediate = rs + (immediate<<2)
+        EX_MEM.ins.immediate = registers[EX_MEM.ins.rs] + (EX_MEM.ins.immediate>>2); // immediate = rs + (immediate>>2)
+    }
+
+    // 處理 beq (在 EX 階段真正判斷是否跳)
+    if (EX_MEM.ins.opcode == "beq") {
+        // 若 rs == rt，branch taken
+        if (registers[EX_MEM.ins.rs] == registers[EX_MEM.ins.rt]) {
+            // PC += immediate
+            PC += EX_MEM.ins.immediate; // 修正這裡，直接加上 immediate
+
+            // Flush：清除未來 pipeline 階段中「已經抓到但還沒執行完」的指令
+            IF_ID.valid = false;
+            ID_EX.valid = false;
+            EX_MEM.valid = false; // 新增
+            MEM_WB.valid = false; // 新增
+        }
+        // 若 rs != rt，則 branch not taken，什麼都不做
     }
 }
 
 void MEM() {
     if(!EX_MEM.valid) return; // 如果EX_MEM沒有指令，則跳過
     MEM_WB.ins = EX_MEM.ins; // 把EX_MEM的指令傳到MEM_WB
-    MEM_WB.valid = true; // 設置MEM_WB有效
+    MEM_WB.ins.immediate = EX_MEM.ins.immediate; // 把EX_MEM的immediate傳到MEM_WB
+    MEM_WB.valid = true; // MEM_WB在MEM之後才會有指令
+    EX_MEM.valid = false; // 用完了
 
     instructionMemory[PC-3].stage = "MEM"; // 更新instructionMemory中的指令階段
     EX_MEM.valid = false; // 用完了EX_MEM的指令
@@ -109,9 +128,10 @@ void WB() {
     if(!MEM_WB.valid) return; // 如果MEM_WB沒有指令，則跳過
     instructionMemory[PC-4].stage = "WB"; // 更新instructionMemory中的指令階段
     // 只有這三個有WB
-    if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
-        registers[MEM_WB.ins.rd] = registers[MEM_WB.ins.rs];
-    } else if(MEM_WB.ins.opcode == "lw") {
+    // if(MEM_WB.ins.opcode == "add" || MEM_WB.ins.opcode == "sub") {
+    //     registers[MEM_WB.ins.rd] = registers[MEM_WB.ins.rs];
+    // }
+    if(MEM_WB.ins.opcode == "lw") {
         registers[MEM_WB.ins.rt] = registers[MEM_WB.ins.immediate];
     }
     MEM_WB.valid = false; // 用完了
@@ -219,12 +239,22 @@ void simulate() {
         if(!IF_ID.valid && !ID_EX.valid && !EX_MEM.valid && !MEM_WB.valid && PC >= instructionMemory.size()) break; // 如果全部都沒有指令了就結束
         cycle++;
     }
+    // 打印暫存器值
+    cout << "Simulation complete. Register values:" << endl;
+    for (int i = 0; i < 32; ++i) {
+        cout << "$" << i << ": " << registers[i] << endl;
+    }
+    //打印記憶體值
+    cout << "Memory values:" << endl;
+    for (int i = 0; i < 32; ++i) {
+        cout << "w[" << i << "]: " << memory[i] << endl;
+    }
 }
 
 
 int main() {
     init();
-    readInput("../inputs/tt.txt");
+    readInput("../inputs/test3.txt");
     simulate();
     return 0;
 }
